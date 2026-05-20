@@ -1,7 +1,8 @@
-from fastapi import APIRouter, File, UploadFile, HTTPException, Depends
+from fastapi import APIRouter, File, UploadFile, HTTPException, Request
 from services.storage_service import (
     upload_to_local, save_document_record, get_document_record,
-    save_cached_analysis, get_cached_analysis
+    save_cached_analysis, get_cached_analysis, create_session_id,
+    delete_document_and_cache
 )
 from services.ocr_service import extract_document
 from services.rag_service import retrieve_relevant_laws
@@ -9,31 +10,55 @@ from services.gemini_service import analyze_document_with_gemini, generate_chat_
 from models.schemas import ChatRequest, ChatResponse
 import json
 import logging
+import os
 
 logger = logging.getLogger(__name__)
 
 api_router = APIRouter()
 
+
+def require_session_id(request: Request) -> str:
+    session_id = request.headers.get("x-session-id", "").strip()
+    if not session_id:
+        raise HTTPException(status_code=401, detail="Missing X-Session-Id header")
+    return session_id
+
+
+def require_document_owner(document_id: str, session_id: str) -> dict:
+    record = get_document_record(document_id)
+    if not record:
+        raise HTTPException(status_code=404, detail="Document not found")
+    if record.get("session_id") != session_id:
+        raise HTTPException(status_code=403, detail="Access denied for this document")
+    return record
+
+
+@api_router.get("/session")
+async def create_session():
+    return {"sessionId": create_session_id()}
+
 @api_router.post("/upload")
-async def upload_document(file: UploadFile = File(...)):
+async def upload_document(request: Request, file: UploadFile = File(...)):
     """Upload document to S3 and return documentId"""
     try:
+        session_id = require_session_id(request)
         contents = await file.read()
         doc_id, local_path = upload_to_local(contents, file.filename)
-        # Assuming dummy user 'user_123' for MVP
-        save_document_record("user_123", doc_id, file.filename, local_path)
+        save_document_record(session_id, doc_id, file.filename, local_path)
         return {"documentId": doc_id, "message": "Uploaded successfully"}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
 @api_router.post("/analyze/{document_id}")
-async def analyze_document(document_id: str, language: str = "en", file: UploadFile = File(None)):
+async def analyze_document(request: Request, document_id: str, language: str = "en", file: UploadFile = File(None)):
     """
     Trigger full analysis pipeline.
     For this MVP, we optionally accept the file again if we don't download from S3 to save time.
     Ideally, we read s3_key from DynamoDB and fetch from S3.
     """
     try:
+        session_id = require_session_id(request)
+        record = require_document_owner(document_id, session_id)
         # ── Cache-first ──────────────────────────────────────────────────────────
         cached = get_cached_analysis(document_id, language)
         if cached:
@@ -47,8 +72,7 @@ async def analyze_document(document_id: str, language: str = "en", file: UploadF
         # ── Cache MISS: run the full pipeline ────────────────────────────────────
         # Simplify MVP: if file is not provided, we download it from local storage via SQLite metadata.
         if not file:
-            record = get_document_record(document_id)
-            if not record or not record.get("local_path"):
+            if not record.get("local_path"):
                 raise HTTPException(status_code=404, detail="Document not found or file missing")
             
             try:
@@ -140,16 +164,30 @@ async def chat_general(request: ChatRequest):
 
 
 @api_router.post("/chat/{document_id}", response_model=ChatResponse)
-async def chat_with_document(document_id: str, request: ChatRequest):
+async def chat_with_document(document_id: str, chat_request: ChatRequest, http_request: Request):
     """Send chat message with document context loaded server-side."""
     try:
-        cached = get_cached_analysis(document_id, request.language)
+        session_id = require_session_id(http_request)
+        require_document_owner(document_id, session_id)
+        cached = get_cached_analysis(document_id, chat_request.language)
         analysis = cached["analysis"] if cached else {}
 
-        history = [{"role": msg.role, "message": msg.message} for msg in request.chat_history]
-        response_text = generate_chat_response(analysis, history, request.user_message, request.language)
+        history = [{"role": msg.role, "message": msg.message} for msg in chat_request.chat_history]
+        response_text = generate_chat_response(analysis, history, chat_request.user_message, chat_request.language)
 
         return ChatResponse(response=response_text)
     except Exception as e:
         logger.error(f"Chat failed for document {document_id}: {e}")
         raise HTTPException(status_code=500, detail="Chat generation failed")
+
+
+@api_router.delete("/documents/{document_id}")
+async def delete_document(document_id: str, request: Request):
+    session_id = require_session_id(request)
+    require_document_owner(document_id, session_id)
+
+    deleted = delete_document_and_cache(document_id)
+    if not deleted:
+        raise HTTPException(status_code=404, detail="Document not found")
+
+    return {"documentId": document_id, "deleted": True}
