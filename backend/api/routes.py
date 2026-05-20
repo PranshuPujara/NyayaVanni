@@ -2,6 +2,12 @@ import os
 from services.knowledge_graph_service import LegalKnowledgeGraphBuilder
 from fastapi import APIRouter, File, UploadFile, HTTPException, Depends
 from services.storage_service import (
+    upload_to_local,
+    save_document_record,
+    get_document_record,
+    save_cached_analysis,
+    get_cached_analysis,
+    create_session_id
     upload_to_local, save_document_record, get_document_record,
   save_cached_analysis, get_cached_analysis,
     create_session_id,
@@ -30,6 +36,21 @@ async def upload_document(file: UploadFile = File(...)):
         doc_id, local_path = upload_to_local(contents, file.filename)
         # Assuming dummy user 'user_123' for MVP
         save_document_record("user_123", doc_id, file.filename, local_path)
+
+graph_builder = LegalKnowledgeGraphBuilder()
+@api_router.get("/session")
+async def create_session():
+    return {"sessionId": create_session_id()}
+    
+@api_router.post("/upload")
+async def upload_document(file: UploadFile = File(...)):
+    """Upload document to S3 and return documentId"""
+    try:
+        contents = await file.read()
+        doc_id, local_path = upload_to_local(contents, file.filename)
+        # Assuming dummy user 'user_123' for MVP
+        save_document_record("user_123", doc_id, file.filename, local_path)
+
 
 # Upload validation constants
 MAX_FILE_SIZE = 10 * 1024 * 1024  # 10 MB limit
@@ -315,6 +336,7 @@ async def chat_with_document(document_id: str, request: ChatRequest):
  feature/legal-knowledge-graph
         raise HTTPException(status_code=500, detail="Chat generation failed")
 
+        raise HTTPException(status_code=500, detail="Chat generation failed")
         raise HTTPException(status_code=500, detail="Chat generation failed")
 
         
