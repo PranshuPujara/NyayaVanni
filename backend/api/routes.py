@@ -2,8 +2,13 @@ import os
 import uuid
 import json
 import logging
+import io
 
 from fastapi import APIRouter, File, UploadFile, HTTPException, Depends, Request
+from fastapi.responses import StreamingResponse
+from pydantic import BaseModel
+from reportlab.pdfgen import canvas
+from reportlab.lib.pagesizes import letter
 
 from services.document_classifier import classify_document
 from services.knowledge_graph_service import LegalKnowledgeGraphBuilder
@@ -19,7 +24,7 @@ from services.storage_service import (
 )
 from services.ocr_service import extract_document
 from services.rag_service import retrieve_relevant_laws
-from services.gemini_service import analyze_document_with_gemini, generate_chat_response
+from services.gemini_service import analyze_document_with_gemini, generate_chat_response, stream_chat_response
 from models.schemas import ChatRequest, ChatResponse
 
 logger = logging.getLogger(__name__)
@@ -32,13 +37,18 @@ MAX_FILE_SIZE = 10 * 1024 * 1024  # 10 MB limit
 ALLOWED_EXTENSIONS = {'pdf', 'png', 'jpg', 'jpeg'}
 ALLOWED_MIME_TYPES = {'application/pdf', 'image/png', 'image/jpeg'}
 
+class DocumentGenerationRequest(BaseModel):
+    effective_date: str
+    party_one_name: str
+    party_two_name: str
+    consideration_amount: str
+    jurisdiction: str
 
 def require_session_id(request: Request) -> str:
     session_id = request.headers.get("x-session-id", "").strip()
     if not session_id:
         raise HTTPException(status_code=401, detail="Missing X-Session-Id header")
     return session_id
-
 
 def require_document_owner(document_id: str, session_id: str) -> dict:
     record = get_document_record(document_id)
@@ -48,11 +58,9 @@ def require_document_owner(document_id: str, session_id: str) -> dict:
         raise HTTPException(status_code=403, detail="Access denied for this document")
     return record
 
-
 @api_router.get("/session")
 async def create_session():
     return {"sessionId": create_session_id()}
-
 
 @api_router.post("/upload")
 async def upload_document(request: Request, file: UploadFile = File(...)):
@@ -108,7 +116,6 @@ async def upload_document(request: Request, file: UploadFile = File(...)):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-
 @api_router.post("/analyze/{document_id}")
 async def analyze_document(request: Request, document_id: str, language: str = "en", force_ocr: bool = False, file: UploadFile = File(None)):
     """Trigger full analysis pipeline."""
@@ -116,11 +123,10 @@ async def analyze_document(request: Request, document_id: str, language: str = "
         session_id = require_session_id(request)
         record = require_document_owner(document_id, session_id)
         
-        # ── Cache-first ──────────────────────────────────────────────────────────
         if not force_ocr:
             cached = get_cached_analysis(document_id, language)
             if cached:
-                logger.info(f"Cache HIT for document {document_id} [{language}]")
+                logger.info(f"Cache HIT for document {document_id}")
                 knowledge_graph = graph_builder.generate_graph(cached["extracted_text"])
                 
                 return {
@@ -131,7 +137,6 @@ async def analyze_document(request: Request, document_id: str, language: str = "
                     "cached": True
                 }
 
-        # ── Cache MISS: run the full pipeline ────────────────────────────────────
         if not file:
             record = get_document_record(document_id)
             if not record or not record.get("local_path"):
@@ -151,9 +156,10 @@ async def analyze_document(request: Request, document_id: str, language: str = "
         else:
             contents = await file.read()
             filename = file.filename
-setAnalysis(data.analysis);
-setClassification(data.classification);
-setKnowledgeGraph(data.knowledge_graph);
+
+        # 1. Extract Text
+        text = extract_document(contents)
+
         # 2. RAG Retrieval
         relevant_laws = retrieve_relevant_laws(text, k=3)
 
@@ -163,11 +169,14 @@ setKnowledgeGraph(data.knowledge_graph);
             relevant_laws,
             language
         )
+        
+        # 4. Classification
+        classification = classify_document(text)
 
-        # 4. Generate Knowledge Graph
+        # 5. Generate Knowledge Graph
         knowledge_graph = graph_builder.generate_graph(text)
 
-        # 5. Save cache
+        # 6. Save cache
         save_cached_analysis(
             document_id,
             language,
@@ -178,8 +187,8 @@ setKnowledgeGraph(data.knowledge_graph);
         return {
             "documentId": document_id,
             "analysis": analysis_result,
-"classification": classification,   # NEW
-"knowledge_graph": knowledge_graph,
+            "classification": classification,
+            "knowledge_graph": knowledge_graph,
             "extracted_text": text[:500] + "...",
             "cached": False
         }
@@ -199,7 +208,7 @@ setKnowledgeGraph(data.knowledge_graph);
         )
 
         trace = traceback.format_exc()
-        logger.error(f"Analysis failed: {e}\n{trace}")
+        logger.error(f"Analysis failed: {e}")
 
         if isinstance(e, ResourceExhausted):
             raise HTTPException(status_code=429, detail="AI Quota limit reached. Please wait a minute and try again.")
@@ -214,10 +223,9 @@ setKnowledgeGraph(data.knowledge_graph);
         if "fitz" in str(e.__class__) or "FileDataError" in type(e).__name__:
             raise HTTPException(status_code=400, detail="The uploaded document is corrupted or could not be parsed.")
 
-
 @api_router.post("/chat/general")
 async def chat_general(request: ChatRequest):
-    """General legal chat — no document context."""
+    """General legal chat no document context."""
     try:
         if not request.user_message or not request.user_message.strip():
             raise HTTPException(status_code=400, detail="Message cannot be empty")
@@ -225,14 +233,14 @@ async def chat_general(request: ChatRequest):
         analysis = request.document_analysis or {}
         history = [{"role": msg.role, "message": msg.message} for msg in request.chat_history]
 
-        generator = stream_chat_response(
+        response_text = generate_chat_response(
             analysis,
             history,
             request.user_message,
             request.language
         )
 
-        return ChatResponse(response=text)
+        return ChatResponse(response=response_text)
     except Exception as e:
         logger.error(f"General chat failed: {e}")
         raise HTTPException(status_code=500, detail="Chat generation failed")
@@ -256,22 +264,16 @@ async def chat_with_document(document_id: str, chat_request: ChatRequest, http_r
 async def generate_document(request: DocumentGenerationRequest):
     """Generates a standard NDA document as a PDF based on provided details."""
     try:
-        # Create an in-memory byte stream to save the PDF
         buffer = io.BytesIO()
-        
-        # Setup reportlab canvas
         c = canvas.Canvas(buffer, pagesize=letter)
         width, height = letter
         
-        # Document Title
         c.setFont("Helvetica-Bold", 16)
         c.drawCentredString(width / 2.0, height - 50, "NON-DISCLOSURE AGREEMENT")
         
-        # Body text
         c.setFont("Helvetica", 12)
         text = c.beginText(50, height - 100)
         
-        # Standard NDA template text populated with variables
         template_text = (
             f"This Non-Disclosure Agreement (the \"Agreement\") is entered into on {request.effective_date} "
             f"by and between {request.party_one_name} (\"Disclosing Party\") and {request.party_two_name} "
@@ -284,30 +286,22 @@ async def generate_document(request: DocumentGenerationRequest):
             f"IN WITNESS WHEREOF, the parties have executed this Agreement as of the date first above written."
         )
         
-        # Split text into lines for the PDF to handle simple word wrap
-        # Note: Reportlab's basic beginText doesn't auto-wrap, doing a rudimentary wrap or split by newline
         lines = template_text.split('\n')
         for line in lines:
             if not line:
                 continue
-            # Very basic wrap (assuming ~80 chars per line for 12pt Helvetica)
             import textwrap
             wrapped_lines = textwrap.wrap(line, width=75)
             for wline in wrapped_lines:
                 text.textLine(wline)
-            text.textLine("") # Add a blank line for paragraph spacing
+            text.textLine("")
 
         c.drawText(text)
-        
-        # Footer
         c.setFont("Helvetica-Oblique", 10)
         c.drawCentredString(width / 2.0, 30, "Generated by NyayaVanni - For informational purposes only.")
         
-        # Finalize the PDF
         c.showPage()
         c.save()
-        
-        # Get the value from the buffer
         buffer.seek(0)
         
         return StreamingResponse(
