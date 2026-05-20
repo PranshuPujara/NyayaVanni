@@ -1,56 +1,34 @@
 import os
+import io
+import uuid
+import json
+import logging
+from reportlab.pdfgen import canvas
+from reportlab.lib.pagesizes import letter
+
+from fastapi import APIRouter, File, UploadFile, HTTPException, Depends, Request
+from fastapi.responses import StreamingResponse
+
 from services.knowledge_graph_service import LegalKnowledgeGraphBuilder
-from fastapi import APIRouter, File, UploadFile, HTTPException, Depends
 from services.storage_service import (
     upload_to_local,
     save_document_record,
     get_document_record,
     save_cached_analysis,
     get_cached_analysis,
-    create_session_id
-    upload_to_local, save_document_record, get_document_record,
-  save_cached_analysis, get_cached_analysis,
     create_session_id,
     delete_document_and_cache,
     UPLOAD_DIR
- main
 )
-import uuid
 from services.ocr_service import extract_document
 from services.rag_service import retrieve_relevant_laws
-from services.gemini_service import analyze_document_with_gemini, generate_chat_response
-from models.schemas import ChatRequest, ChatResponse
-import json
-import logging
+from services.gemini_service import analyze_document_with_gemini, generate_chat_response, stream_chat_response
+from models.schemas import ChatRequest, ChatResponse, DocumentGenerationRequest
 
 logger = logging.getLogger(__name__)
 
 api_router = APIRouter()
- feature/legal-knowledge-graph
 graph_builder = LegalKnowledgeGraphBuilder()
-@api_router.post("/upload")
-async def upload_document(file: UploadFile = File(...)):
-    """Upload document to S3 and return documentId"""
-    try:
-        contents = await file.read()
-        doc_id, local_path = upload_to_local(contents, file.filename)
-        # Assuming dummy user 'user_123' for MVP
-        save_document_record("user_123", doc_id, file.filename, local_path)
-
-graph_builder = LegalKnowledgeGraphBuilder()
-@api_router.get("/session")
-async def create_session():
-    return {"sessionId": create_session_id()}
-    
-@api_router.post("/upload")
-async def upload_document(file: UploadFile = File(...)):
-    """Upload document to S3 and return documentId"""
-    try:
-        contents = await file.read()
-        doc_id, local_path = upload_to_local(contents, file.filename)
-        # Assuming dummy user 'user_123' for MVP
-        save_document_record("user_123", doc_id, file.filename, local_path)
-
 
 # Upload validation constants
 MAX_FILE_SIZE = 10 * 1024 * 1024  # 10 MB limit
@@ -282,16 +260,13 @@ async def analyze_document(
                 detail="The uploaded document is corrupted or could not be parsed."
             )
 
- feature/legal-knowledge-graph
         raise HTTPException(
             status_code=500,
             detail="An internal processing error occurred."
         )
 
-        raise HTTPException(status_code=500, detail="An internal processing error occurred.")
 
-
-@api_router.post("/chat/general", response_model=ChatResponse)
+@api_router.post("/chat/general")
 async def chat_general(request: ChatRequest):
     """General legal chat — no document context."""
     try:
@@ -299,47 +274,108 @@ async def chat_general(request: ChatRequest):
         if not request.user_message or not request.user_message.strip():
             raise HTTPException(status_code=400, detail="Message cannot be empty")
 
-        analysis = request.document_analysis or {}
+        analysis = {}
 
         history = [
             {"role": msg.role, "message": msg.message}
             for msg in request.chat_history
         ]
 
-        text = generate_chat_response(
+        generator = stream_chat_response(
             analysis,
             history,
             request.user_message,
             request.language
         )
 
-        return ChatResponse(response=text)
-
+        return StreamingResponse(generator, media_type="text/plain")
     except Exception as e:
         logger.error(f"General chat failed: {e}")
         raise HTTPException(status_code=500, detail="Chat generation failed")
 
-
-@api_router.post("/chat/{document_id}", response_model=ChatResponse)
-async def chat_with_document(document_id: str, request: ChatRequest):
+@api_router.post("/chat/{document_id}")
+async def chat_with_document(document_id: str, chat_request: ChatRequest, http_request: Request):
     """Send chat message with document context loaded server-side."""
     try:
-        cached = get_cached_analysis(document_id, request.language)
+        cached = get_cached_analysis(document_id, chat_request.language)
         analysis = cached["analysis"] if cached else {}
 
-        history = [{"role": msg.role, "message": msg.message} for msg in request.chat_history]
-        response_text = generate_chat_response(analysis, history, request.user_message, request.language)
+        history = [{"role": msg.role, "message": msg.message} for msg in chat_request.chat_history]
+        generator = stream_chat_response(analysis, history, chat_request.user_message, chat_request.language)
 
-        return ChatResponse(response=response_text)
+        return StreamingResponse(generator, media_type="text/plain")
     except Exception as e:
         logger.error(f"Chat failed for document {document_id}: {e}")
- feature/legal-knowledge-graph
-        raise HTTPException(status_code=500, detail="Chat generation failed")
-
         raise HTTPException(status_code=500, detail="Chat generation failed")
         raise HTTPException(status_code=500, detail="Chat generation failed")
 
+@api_router.post("/generate-document")
+async def generate_document(request: DocumentGenerationRequest):
+    """Generates a standard NDA document as a PDF based on provided details."""
+    try:
+        # Create an in-memory byte stream to save the PDF
+        buffer = io.BytesIO()
         
+        # Setup reportlab canvas
+        c = canvas.Canvas(buffer, pagesize=letter)
+        width, height = letter
+        
+        # Document Title
+        c.setFont("Helvetica-Bold", 16)
+        c.drawCentredString(width / 2.0, height - 50, "NON-DISCLOSURE AGREEMENT")
+        
+        # Body text
+        c.setFont("Helvetica", 12)
+        text = c.beginText(50, height - 100)
+        
+        # Standard NDA template text populated with variables
+        template_text = (
+            f"This Non-Disclosure Agreement (the \"Agreement\") is entered into on {request.effective_date} "
+            f"by and between {request.party_one_name} (\"Disclosing Party\") and {request.party_two_name} "
+            f"(\"Receiving Party\").\n\n"
+            f"1. Confidential Information: The Receiving Party agrees to keep confidential any proprietary "
+            f"information disclosed by the Disclosing Party.\n\n"
+            f"2. Consideration: In consideration for the obligations set forth herein, the parties acknowledge "
+            f"the receipt and sufficiency of {request.consideration_amount}.\n\n"
+            f"3. Jurisdiction: This Agreement shall be governed by the laws of {request.jurisdiction}.\n\n"
+            f"IN WITNESS WHEREOF, the parties have executed this Agreement as of the date first above written."
+        )
+        
+        # Split text into lines for the PDF to handle simple word wrap
+        # Note: Reportlab's basic beginText doesn't auto-wrap, doing a rudimentary wrap or split by newline
+        lines = template_text.split('\n')
+        for line in lines:
+            if not line:
+                continue
+            # Very basic wrap (assuming ~80 chars per line for 12pt Helvetica)
+            import textwrap
+            wrapped_lines = textwrap.wrap(line, width=75)
+            for wline in wrapped_lines:
+                text.textLine(wline)
+            text.textLine("") # Add a blank line for paragraph spacing
+
+        c.drawText(text)
+        
+        # Footer
+        c.setFont("Helvetica-Oblique", 10)
+        c.drawCentredString(width / 2.0, 30, "Generated by NyayaVanni - For informational purposes only.")
+        
+        # Finalize the PDF
+        c.showPage()
+        c.save()
+        
+        # Get the value from the buffer
+        buffer.seek(0)
+        
+        return StreamingResponse(
+            buffer, 
+            media_type="application/pdf", 
+            headers={"Content-Disposition": 'attachment; filename="NDA_Document.pdf"'}
+        )
+    except Exception as e:
+        logger.error(f"Failed to generate document: {e}")
+        raise HTTPException(status_code=500, detail="Failed to generate document")
+
 @api_router.delete("/documents/{document_id}")
 async def delete_document(document_id: str, request: Request):
     session_id = require_session_id(request)
