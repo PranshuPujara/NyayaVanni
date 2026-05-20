@@ -2,8 +2,9 @@ from fastapi import APIRouter, File, UploadFile, HTTPException, Request
 from services.storage_service import (
     upload_to_local, save_document_record, get_document_record,
     save_cached_analysis, get_cached_analysis, create_session_id,
-    delete_document_and_cache
+    delete_document_and_cache, UPLOAD_DIR
 )
+import uuid
 from services.ocr_service import extract_document
 from services.rag_service import retrieve_relevant_laws
 from services.gemini_service import analyze_document_with_gemini, generate_chat_response
@@ -15,6 +16,11 @@ import os
 logger = logging.getLogger(__name__)
 
 api_router = APIRouter()
+
+# Upload validation constants
+MAX_FILE_SIZE = 10 * 1024 * 1024  # 10 MB limit
+ALLOWED_EXTENSIONS = {'pdf', 'png', 'jpg', 'jpeg'}
+ALLOWED_MIME_TYPES = {'application/pdf', 'image/png', 'image/jpeg'}
 
 
 def require_session_id(request: Request) -> str:
@@ -37,15 +43,57 @@ def require_document_owner(document_id: str, session_id: str) -> dict:
 async def create_session():
     return {"sessionId": create_session_id()}
 
+
 @api_router.post("/upload")
 async def upload_document(request: Request, file: UploadFile = File(...)):
-    """Upload document to S3 and return documentId"""
+    """Upload document and return documentId"""
     try:
         session_id = require_session_id(request)
-        contents = await file.read()
-        doc_id, local_path = upload_to_local(contents, file.filename)
-        save_document_record(session_id, doc_id, file.filename, local_path)
+        
+        # 1. Validate file extension and MIME type
+        filename = file.filename
+        if not filename:
+            raise HTTPException(status_code=400, detail="Uploaded file must have a valid filename.")
+        ext = filename.split('.')[-1].lower() if '.' in filename else ''
+        if ext not in ALLOWED_EXTENSIONS or file.content_type not in ALLOWED_MIME_TYPES:
+            raise HTTPException(
+                status_code=400, 
+                detail="Unsupported file format or MIME type. Only PDF, PNG, JPG, and JPEG are allowed."
+            )
+            
+        # 2. Generate unique document ID and local file path
+        doc_id = str(uuid.uuid4())
+        local_path = os.path.join(UPLOAD_DIR, f"{doc_id}.{ext}")
+        
+        # 3. Stream write to disk to prevent OOM / high memory consumption
+        size = 0
+        try:
+            with open(local_path, "wb") as buffer:
+                while chunk := await file.read(1024 * 1024):  # 1MB chunks
+                    size += len(chunk)
+                    if size > MAX_FILE_SIZE:
+                        raise HTTPException(
+                            status_code=413, 
+                            detail="File size exceeds the maximum allowed limit of 10MB."
+                        )
+                    buffer.write(chunk)
+        except HTTPException as http_exc:
+            # Delete partial file if limit is exceeded
+            if os.path.exists(local_path):
+                os.remove(local_path)
+            raise http_exc
+        except Exception as e:
+            # Clean up on write failure
+            if os.path.exists(local_path):
+                os.remove(local_path)
+            raise HTTPException(status_code=500, detail=f"File save failed: {str(e)}")
+            
+        # 4. Save metadata record to SQLite
+        save_document_record(session_id, doc_id, filename, local_path)
         return {"documentId": doc_id, "message": "Uploaded successfully"}
+        
+    except HTTPException as http_err:
+        raise http_err
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
