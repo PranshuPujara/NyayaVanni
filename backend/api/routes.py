@@ -117,7 +117,7 @@ async def upload_document(request: Request, file: UploadFile = File(...)):
         raise HTTPException(status_code=500, detail=str(e))
 
 @api_router.post("/analyze/{document_id}")
-async def analyze_document(request: Request, document_id: str, language: str = "en", force_ocr: bool = False, file: UploadFile = File(None)):
+def analyze_document(request: Request, document_id: str, language: str = "en", force_ocr: bool = False, file: UploadFile = File(None)):
     """Trigger full analysis pipeline."""
     try:
         session_id = require_session_id(request)
@@ -154,7 +154,7 @@ async def analyze_document(request: Request, document_id: str, language: str = "
                 )
             filename = record["filename"]
         else:
-            contents = await file.read()
+            contents = file.file.read()
             filename = file.filename
 
         # 1. Extract Text
@@ -224,7 +224,7 @@ async def analyze_document(request: Request, document_id: str, language: str = "
             raise HTTPException(status_code=400, detail="The uploaded document is corrupted or could not be parsed.")
 
 @api_router.post("/chat/general")
-async def chat_general(request: ChatRequest):
+def chat_general(request: ChatRequest):
     """General legal chat no document context."""
     try:
         if not request.user_message or not request.user_message.strip():
@@ -246,7 +246,7 @@ async def chat_general(request: ChatRequest):
         raise HTTPException(status_code=500, detail="Chat generation failed")
 
 @api_router.post("/chat/{document_id}")
-async def chat_with_document(document_id: str, chat_request: ChatRequest, http_request: Request):
+def chat_with_document(document_id: str, chat_request: ChatRequest, http_request: Request):
     """Send chat message with document context loaded server-side."""
     try:
         session_id = require_session_id(http_request)
@@ -266,7 +266,7 @@ async def chat_with_document(document_id: str, chat_request: ChatRequest, http_r
         raise HTTPException(status_code=500, detail="Chat generation failed")
 
 @api_router.post("/generate-document")
-async def generate_document(request: DocumentGenerationRequest):
+def generate_document(request: DocumentGenerationRequest):
     """Generates a standard NDA document as a PDF based on provided details."""
     try:
         buffer = io.BytesIO()
