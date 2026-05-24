@@ -163,7 +163,7 @@ def analyze_document(request: Request, document_id: str, language: str = "en", f
             filename = file.filename
 
         # 1. Extract Text
-        text = extract_document(contents, filename, force_ocr=force_ocr)
+        text = extract_document(contents, filename, force_ocr=force_ocr, language=language)
 
         # 2. RAG Retrieval
         relevant_laws = retrieve_relevant_laws(text, k=3)
@@ -235,7 +235,8 @@ def chat_general(request: ChatRequest):
         if not request.user_message or not request.user_message.strip():
             raise HTTPException(status_code=400, detail="Message cannot be empty")
 
-        analysis = request.document_analysis or {}
+        # General chat does not use document-specific analysis context.
+        analysis = {}
         history = [{"role": msg.role, "message": msg.message} for msg in request.chat_history]
 
         response_text = generate_chat_response(

@@ -142,7 +142,7 @@ Extracts:
 ## 📤 Document Upload Interface
 
 <p align="center">
-  <img src="frontend/public/screenshots/upload.png" width="900"/>
+  <img src="screenshots/upload.png" width="900"/>
 </p>
 
 ---
@@ -150,7 +150,7 @@ Extracts:
 ## 📊 AI Legal Analysis Dashboard
 
 <p align="center">
-  <img src="frontend/public/screenshots/dashboard.png" width="900"/>
+  <img src="screenshots/dashboard.png" width="900"/>
 </p>
 
 ---
@@ -158,7 +158,7 @@ Extracts:
 ## 💬 AI Legal Chat Assistant
 
 <p align="center">
-  <img src="frontend/public/screenshots/chat.png" width="900"/>
+  <img src="screenshots/chat.png" width="900"/>
 </p>
 
 ---
@@ -166,7 +166,7 @@ Extracts:
 ## ⚠️ Risk Assessment UI
 
 <p align="center">
-  <img src="frontend/public/screenshots/risk.png" width="900"/>
+  <img src="screenshots/risk.png" width="900"/>
 </p>
 
 ---
@@ -204,24 +204,28 @@ Extracts:
 ```text
 NyayaVanni/
 │
+├── .github/
+│
 ├── backend/
 │   ├── api/
-│   ├── services/
-│   ├── models/
-│   ├── uploads/
 │   ├── data/
-│   ├── main.py
-│   └── requirements.txt
+│   ├── models/
+│   ├── services/
+│   └── uploads/
 │
 ├── frontend/
 │   ├── public/
-│   │   └── screenshots/
-│   ├── src/
-│   └── package.json
+│   └── src/
 │
 ├── designs/
-├── README.md
-└── LICENSE
+├── screenshots/
+├── tests/
+│
+├── CODE_OF_CONDUCT.md
+├── CONTRIBUTING.md
+├── LICENSE
+├── main.py
+└── README.md
 ```
 
 ---

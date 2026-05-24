@@ -17,8 +17,8 @@ export default function FAQ() {
   ];
 
   return (
-    <div className="min-h-screen bg-slate-50 text-slate-900 dark:bg-slate-950 dark:text-slate-100 px-6 py-6 transition-colors duration-300">
-      <div className="max-w-4xl mx-auto flex flex-col min-h-[calc(100vh-3rem)]">
+    <div className="min-h-screen bg-slate-50 text-slate-900 dark:bg-slate-950 dark:text-slate-100 flex flex-col transition-colors duration-300">
+      <div className="max-w-4xl mx-auto flex flex-col flex-1 w-full px-6 py-6">
         
         {/* Navigation / Header */}
         <header className="flex items-center justify-between py-4 mb-8 border-b border-slate-200 dark:border-slate-800">
@@ -48,9 +48,11 @@ export default function FAQ() {
             ))}
           </div>
         </main>
-
-        <Footer />
       </div>
+
+      <section className="z-10 w-full px-6 pb-16 mx-auto max-w-7xl">
+        <Footer />
+      </section>
     </div>
   );
 }

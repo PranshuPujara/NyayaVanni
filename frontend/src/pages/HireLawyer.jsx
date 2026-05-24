@@ -477,9 +477,9 @@ export default function HireLawyer() {
         )}
       </main>
 
-      <div className="max-w-7xl mx-auto px-6">
+      <section className="z-10 w-full px-6 pb-16 mx-auto max-w-7xl">
         <Footer />
-      </div>
+      </section>
 
       {/* Modal */}
       {isModalOpen && selectedLawyer && (

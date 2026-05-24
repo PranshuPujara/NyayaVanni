@@ -7,3 +7,8 @@ from main import app
 def client():
     app.include_router(api_router)
     return TestClient(app)
+
+
+@pytest.fixture
+def test_client(client):
+    return client

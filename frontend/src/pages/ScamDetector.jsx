@@ -308,10 +308,9 @@ export default function ScamDetector() {
                     </div>
                     <p
                       className={`mt-2 inline-flex items-center gap-2 px-3 py-1.5 rounded-full text-sm font-semibold
-                        ${
-                          risk.tone === "high"
-                            ? "bg-rose-500/15 border border-rose-500/25 text-rose-800 dark:text-rose-200"
-                            : risk.tone === "mid"
+                        ${risk.tone === "high"
+                          ? "bg-rose-500/15 border border-rose-500/25 text-rose-800 dark:text-rose-200"
+                          : risk.tone === "mid"
                             ? "bg-amber-500/15 border border-amber-500/25 text-amber-800 dark:text-amber-200"
                             : "bg-emerald-500/15 border border-emerald-500/25 text-emerald-800 dark:text-emerald-200"
                         }`}
@@ -381,9 +380,9 @@ export default function ScamDetector() {
         </div>
       </main>
 
-      <div className="max-w-5xl mx-auto px-6">
+      <section className="z-10 w-full px-6 mx-auto max-w-7xl">
         <Footer />
-      </div>
+      </section>
     </div>
   );
 }
