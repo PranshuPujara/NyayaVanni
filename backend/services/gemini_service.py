@@ -11,7 +11,16 @@ load_dotenv()
 from services.legal_processor import LegalQueryOptimizer
 
 logger = logging.getLogger(__name__)
-genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
+
+# Validate GEMINI_API_KEY on startup
+api_key = os.getenv("GEMINI_API_KEY")
+if not api_key or not api_key.strip():
+    raise RuntimeError(
+        "GEMINI_API_KEY environment variable is not set or empty. "
+        "Please set this variable to use RAG and document analysis features."
+    )
+
+genai.configure(api_key=api_key)
 
 # Instantiate the optimizer module globally
 query_optimizer = LegalQueryOptimizer()
