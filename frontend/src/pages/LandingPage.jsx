@@ -319,6 +319,7 @@ export default function LandingPage() {
                 <p className="mb-3 text-sm font-semibold text-white">Product</p>
                 <div className="flex flex-col gap-2 text-slate-400">
                   <button onClick={() => navigate('/chat')} className="text-left transition hover:text-white">Chat with AI</button>
+                  <button onClick={() => navigate('/document-generator')} className="text-left transition hover:text-white">Generate NDA</button>
                   <button onClick={() => window.scrollTo({ top: 0, behavior: 'smooth' })} className="text-left transition hover:text-white">Upload Document</button>
                   <button onClick={() => navigate('/lawyers')} className="text-left transition hover:text-white">Hire a Lawyer</button>
                 </div>
