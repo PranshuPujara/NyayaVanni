@@ -242,8 +242,7 @@ def chat_general(request: ChatRequest):
         if not request.user_message or not request.user_message.strip():
             raise HTTPException(status_code=400, detail="Message cannot be empty")
 
-        # General chat does not use document-specific analysis context.
-        analysis = {}
+        analysis = getattr(request, "document_analysis", None) or {}
         history = [{"role": msg.role, "message": msg.message} for msg in request.chat_history]
 
         response_text = generate_chat_response(
