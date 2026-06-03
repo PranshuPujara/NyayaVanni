@@ -3,7 +3,7 @@ import uuid
 import logging
 import io
 
-from fastapi import APIRouter, File, UploadFile, HTTPException, Request
+from fastapi import APIRouter, File, UploadFile, HTTPException, Depends, Request, Response
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from reportlab.pdfgen import canvas
@@ -64,9 +64,9 @@ class DocumentGenerationRequest(BaseModel):
 
 
 def require_session_id(request: Request) -> str:
-    session_id = request.headers.get("x-session-id", "").strip()
+    session_id = request.cookies.get("session_id")
     if not session_id:
-        raise HTTPException(status_code=401, detail="Missing X-Session-Id header")
+        raise HTTPException(status_code=401, detail="Missing session_id cookie")
     return session_id
 
 
@@ -80,8 +80,19 @@ def require_document_owner(document_id: str, session_id: str) -> dict:
 
 
 @api_router.get("/session")
-async def create_session():
-    return {"sessionId": create_session_id()}
+async def create_session(request: Request, response: Response):
+    session_id = request.cookies.get("session_id")
+    if not session_id:
+        session_id = create_session_id()
+        response.set_cookie(
+            key="session_id",
+            value=session_id,
+            httponly=True,
+            samesite="lax",
+            secure=False,  # Set to True if using HTTPS in production
+            max_age=30 * 24 * 60 * 60  # 30 days
+        )
+    return {"status": "Session active"}
 
 
 @api_router.post("/upload")
