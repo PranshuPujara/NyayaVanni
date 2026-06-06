@@ -13,9 +13,9 @@ from slowapi import Limiter
 from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
 
-from services.document_classifier import classify_document
-from services.knowledge_graph_service import LegalKnowledgeGraphBuilder
-from services.storage_service import (
+from ..services.document_classifier import classify_document
+from ..services.knowledge_graph_service import LegalKnowledgeGraphBuilder
+from ..services.storage_service import (
     upload_to_local,
     save_document_record,
     get_document_record,
@@ -25,10 +25,10 @@ from services.storage_service import (
     delete_document_and_cache,
     UPLOAD_DIR
 )
-from services.ocr_service import extract_document
-from services.rag_service import retrieve_relevant_laws
-from services.gemini_service import analyze_document_with_gemini, generate_chat_response, stream_chat_response
-from models.schemas import ChatRequest, ChatResponse
+from ..services.ocr_service import extract_document
+from ..services.rag_service import retrieve_relevant_laws
+from ..services.gemini_service import analyze_document_with_gemini, generate_chat_response, stream_chat_response
+from ..models.schemas import ChatRequest, ChatResponse
 
 logger = logging.getLogger(__name__)
 
@@ -220,6 +220,10 @@ def analyze_document(request: Request, document_id: str, language: str = "en", f
         if "fitz" in str(e.__class__) or "FileDataError" in type(e).__name__:
             raise HTTPException(status_code=400, detail="The uploaded document is corrupted or could not be parsed.")
 
+ main
+        raise HTTPException(status_code=500, detail="Document analysis failed")
+
+main
 
 @api_router.post("/chat/general")
 @limiter.limit(RATE_LIMIT_CHAT)
